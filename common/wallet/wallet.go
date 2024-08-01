@@ -9,7 +9,7 @@ G is the generator point on the Elliptic curve.
 k is a private key in the form of a randomly generated number.
 K is a public key.
 
-How to generate Bitcoin address
+# How to generate Bitcoin address
 
 Pulick Key --> SHA256 --> RIPEMD160 --> Base58Check Encoding --> Bitcoin Address
 
@@ -19,7 +19,6 @@ Base58Check Encoding
 3. (Version + Payload) --> SHA256 --> SHA256 --> First 4bytes --> Checksum
 3.  Version + Payload + Checksum
 4. (Version + Payload + Checksum) --> Base58 encode
-
 */
 package wallet
 
@@ -31,8 +30,8 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/gob"
-	"io/ioutil"
 	"log"
+	"math/big"
 	"os"
 
 	"github.com/mr-tron/base58"
@@ -144,19 +143,74 @@ func Base58Decode(input []byte) []byte {
 	return decode
 }
 
+type _PrivateKey struct {
+	D          *big.Int
+	PublicKeyX *big.Int
+	PublicKeyY *big.Int
+}
+
+func (w *Wallet) GobEncode() ([]byte, error) {
+	privKey := &_PrivateKey{
+		D:          w.PrivateKey.D,
+		PublicKeyX: w.PrivateKey.PublicKey.X,
+		PublicKeyY: w.PrivateKey.PublicKey.Y,
+	}
+
+	var buf bytes.Buffer
+
+	encoder := gob.NewEncoder(&buf)
+	err := encoder.Encode(privKey)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = buf.Write(w.PublicKey)
+	if err != nil {
+		return nil, err
+	}
+
+	return buf.Bytes(), nil
+}
+
+func (w *Wallet) GobDecode(data []byte) error {
+	buf := bytes.NewBuffer(data)
+	var privKey _PrivateKey
+
+	decoder := gob.NewDecoder(buf)
+	err := decoder.Decode(&privKey)
+	if err != nil {
+		return err
+	}
+
+	w.PrivateKey = &ecdsa.PrivateKey{
+		D: privKey.D,
+		PublicKey: ecdsa.PublicKey{
+			X:     privKey.PublicKeyX,
+			Y:     privKey.PublicKeyY,
+			Curve: elliptic.P256(),
+		},
+	}
+	w.PublicKey = make([]byte, buf.Len())
+	_, err = buf.Read(w.PublicKey)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func LoadFile(path string) (*Wallet, error) {
 	walletFile := path
 	if _, err := os.Stat(walletFile); os.IsNotExist(err) {
 		return nil, err
 	}
 
-	fileContent, err := ioutil.ReadFile(walletFile)
+	fileContent, err := os.ReadFile(walletFile)
 	if err != nil {
 		return nil, err
 	}
 
 	var w Wallet
-	gob.Register(elliptic.P256())
 	decoder := gob.NewDecoder(bytes.NewReader(fileContent))
 	err = decoder.Decode(&w)
 	if err != nil {
@@ -170,15 +224,13 @@ func saveFile(w *Wallet, path string) {
 	var content bytes.Buffer
 	walletFile := path
 
-	gob.Register(elliptic.P256())
-
 	encoder := gob.NewEncoder(&content)
 	err := encoder.Encode(w)
 	if err != nil {
 		log.Panic(err)
 	}
 
-	err = ioutil.WriteFile(walletFile, content.Bytes(), 0644)
+	err = os.WriteFile(walletFile, content.Bytes(), 0644)
 	if err != nil {
 		log.Panic(err)
 	}
